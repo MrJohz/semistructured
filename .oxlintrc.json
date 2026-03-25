@@ -10,5 +10,5 @@
       }
     }
   ],
-  "ignorePatterns": ["dist"]
+  "ignorePatterns": ["dist", "test/wpt/fixtures"]
 }
