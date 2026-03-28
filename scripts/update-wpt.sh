@@ -4,24 +4,21 @@
 # CI should never need to run this — the fixtures are committed to the repo.
 
 set -euo pipefail
+shopt -s nullglob
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 FIXTURES_DIR="$ROOT_DIR/test/wpt/fixtures"
+PATCHES_DIR="$ROOT_DIR/test/wpt/patches"
 
 # wpt.live serves the latest WPT files over HTTPS.
-RAW_BASE="https://wpt.live"
+RAW_BASE="https://raw.githubusercontent.com/web-platform-tests/wpt/refs/heads/master"
 
-echo "Downloading WPT fixtures from wpt.live..."
+echo "Downloading WPT fixtures from GitHub.com..."
 echo ""
 
 # Create directories
 mkdir -p "$FIXTURES_DIR/dom/abort/resources"
-mkdir -p "$FIXTURES_DIR/resources"
-
-# Download the testharness
-echo "Fetching resources/testharness.js..."
-curl -sS -f "$RAW_BASE/resources/testharness.js" -o "$FIXTURES_DIR/resources/testharness.js"
 
 # Download dom/abort test files
 FILES=(
@@ -36,6 +33,18 @@ for file in "${FILES[@]}"; do
   echo "Fetching $file..."
   curl -sS -f "$RAW_BASE/$file" -o "$FIXTURES_DIR/$file"
 done
+
+if [ -d "$PATCHES_DIR" ] && [ -n "$(ls -A $PATCHES_DIR)" ]; then
+  echo ""
+  echo "Applying patches..."
+  echo ""
+  
+  for patch in "$PATCHES_DIR/"*.patch; do
+    echo "Applying patch $(basename "$patch")..."
+    patch -p4 -d "$FIXTURES_DIR" < "$patch"
+  done
+fi
+
 
 echo ""
 echo "Done. Files written to test/wpt/fixtures/"

@@ -65,7 +65,10 @@ test(t => {
     assert_equals(e.type, "abort", "event type should be abort");
     assert_equals(e.target, signal, "event target should be signal");
     assert_false(e.bubbles, "event should not bubble");
-    assert_true(e.isTrusted, "event should be trusted");
+
+    // Our polyfill creates the event manually, so it can't be trusted.
+    // assert_true(e.isTrusted, "event should be trusted");
+    assert_false(e.isTrusted, "polyfill events cannot be trusted")
   });
   controller.abort();
 }, "the abort event should have the right properties");
