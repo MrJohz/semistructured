@@ -10,7 +10,8 @@
     "erasableSyntaxOnly": true,
     "rewriteRelativeImportExtensions": true,
     "skipLibCheck": true,
-    "isolatedModules": true
+    "isolatedModules": true,
+    "stripInternal": true
   },
   "include": ["src/**/*.ts", "test/**/*.ts"]
 }
