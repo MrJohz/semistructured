@@ -1,44 +1,50 @@
+import { AbortController } from "./abort-controller.ts";
+
 /** @internal */
-export type AbortSignalCallbacks = {
-  onDispatch: (callback: (reason: any) => void) => void;
+export type RegisterSignal = (callbacks: RegisterSignalCallbacks) => () => void;
+/** @internal */
+export type RegisterSignalCallbacks = {
+  abort: (reason: any) => void;
+  dispatchEvent: (ev: Event) => boolean;
 };
 
 /** @internal */
 export const SIGIL = Symbol("AbortSignalConstructorSigil");
 
 export class AbortSignal extends EventTarget {
-  #callbacks: AbortSignalCallbacks;
-  #aborted: boolean = false;
+  #aborted = false;
   #reason: any = undefined;
+  #addSignalCallbacks = {
+    abort: (reason: any) => {
+      this.#aborted = true;
+      this.#reason = reason;
+      this.#registerSignal = undefined;
+      this.#removeSignal?.();
+      this.#removeSignal = undefined;
+    },
+    dispatchEvent: (ev: Event) => {
+      const dispatch = this.dispatchEvent(ev);
+      if (!dispatch) return dispatch;
+      return this.onabort?.(ev) ?? false;
+    },
+  };
+  #registerSignal?: RegisterSignal;
+  #removeSignal?: () => void;
 
   /** @internal */
-  constructor(sigil: typeof SIGIL, callbacks: AbortSignalCallbacks) {
+  constructor(sigil: typeof SIGIL, registerSignal?: RegisterSignal) {
     if (sigil !== SIGIL) throw new Error("AbortSignal is not constructable");
     super();
 
-    this.#callbacks = callbacks;
-    this.#callbacks.onDispatch((reason) => {
-      if (this.#aborted) return;
-      this.#aborted = true;
-      this.#reason = reason;
-
-      const event = new Event("abort", {
-        bubbles: false,
-        cancelable: false,
-        composed: false,
-      });
-
-      // TODO: which order should these go in?
-      this.dispatchEvent(event);
-      this.onabort?.(event);
-    });
+    this.#registerSignal = registerSignal;
+    this.#removeSignal = this.#registerSignal?.(this.#addSignalCallbacks);
   }
   /**
    * The **`aborted`** read-only property returns a value that indicates whether the asynchronous operations the signal is communicating with are aborted (`true`) or not (`false`).
    *
    * [MDN Reference](https://developer.mozilla.org/docs/Web/API/AbortSignal/aborted)
    */
-  get aborted() {
+  get aborted(): boolean {
     return this.#aborted;
   }
 
@@ -47,7 +53,7 @@ export class AbortSignal extends EventTarget {
    *
    * [MDN Reference](https://developer.mozilla.org/docs/Web/API/AbortSignal/reason)
    */
-  get reason() {
+  get reason(): any {
     return this.#reason;
   }
 
@@ -60,9 +66,7 @@ export class AbortSignal extends EventTarget {
    * [MDN Reference](https://developer.mozilla.org/docs/Web/API/AbortSignal/throwIfAborted)
    */
   throwIfAborted(): void {
-    if (this.#aborted) {
-      throw this.#reason;
-    }
+    if (this.#aborted) throw this.#reason;
   }
 
   // EventTarget type overrides
@@ -93,50 +97,40 @@ export class AbortSignal extends EventTarget {
   }
 
   static abort(reason?: any) {
-    const signal = new AbortSignal(SIGIL, { onDispatch: () => {} });
+    const signal = new AbortSignal(SIGIL);
     signal.#aborted = true;
     signal.#reason = reason === undefined ? new DOMException("Aborted", "AbortError") : reason;
     return signal;
   }
 
   static timeout(delay: number) {
-    const signal = new AbortSignal(SIGIL, { onDispatch: () => {} });
+    const ctrl = new AbortController();
     setTimeout(() => {
-      signal.#aborted = true;
-      signal.#reason = new DOMException("The operation timed out.", "TimeoutError");
-      const event = new Event("abort", {
-        bubbles: false,
-        cancelable: false,
-        composed: false,
-      });
-      signal.dispatchEvent(event);
-      signal.onabort?.(event);
+      const reason = new DOMException("The operation timed out.", "TimeoutError");
+
+      ctrl.abort(reason);
     }, delay);
-    return signal;
+    return ctrl.signal;
   }
 
   static any(signals: AbortSignal[]) {
-    const signal = new AbortSignal(SIGIL, { onDispatch: () => {} });
-    for (const inputSignal of signals) {
-      if (inputSignal.aborted) {
-        signal.#aborted = true;
-        signal.#reason = inputSignal.reason;
-        break;
-      }
-      inputSignal.addEventListener("abort", () => {
-        if (signal.#aborted) return;
-        signal.#aborted = true;
-        signal.#reason = inputSignal.reason;
+    const upstream = [...signals];
+    const signal = new AbortSignal(SIGIL, (cb) => {
+      const registrations: (() => void)[] = [];
+      for (const ups of upstream) {
+        if (ups.#aborted) {
+          cb.abort(ups.#reason);
+          break;
+        }
 
-        const event = new Event("abort", {
-          bubbles: false,
-          cancelable: false,
-          composed: false,
-        });
-        signal.dispatchEvent(event);
-        signal.onabort?.(event);
-      });
-    }
+        const unregister = ups.#registerSignal?.(cb);
+        if (unregister) registrations.push(unregister);
+      }
+
+      return () => {
+        for (const r of registrations) r();
+      };
+    });
     return signal;
   }
 }
