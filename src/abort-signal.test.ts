@@ -73,9 +73,88 @@ describe("AbortSignal", () => {
       assert.ok(await waitForDeref(ref));
     });
 
-    test("");
+    test("A signal can be dropped if its parent controller is dropped", async () => {
+      let controller: AbortController | undefined = new AbortController();
+      const ref = new WeakRef(controller.signal);
+
+      controller = undefined;
+
+      assert.ok(await waitForDeref(ref));
+    });
+
+    test("Signals with handlers can be dropped", async () => {
+      let controller: AbortController | undefined = new AbortController();
+      const ref = new WeakRef(controller.signal);
+      controller.signal.addEventListener("abort", noop);
+
+      controller = undefined;
+
+      assert.ok(await waitForDeref(ref));
+    });
+
+    test("A timeout with a listener is not dropped until the timeout is completed", async () => {
+      const start = performance.now();
+      let signal: AbortSignal | undefined = AbortSignal.timeout(100);
+      signal.addEventListener("abort", noop);
+      const ref = new WeakRef(signal);
+
+      signal = undefined;
+
+      await waitForDeref(ref);
+      assert.ok(performance.now() - start < 50, "timeout should not have fired yet");
+      assert.ok(ref.deref());
+
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      assert.ok(await waitForDeref(ref));
+    });
+
+    test("A timeout can be dropped after its listener is removed", async () => {
+      let signal: AbortSignal | undefined = AbortSignal.timeout(100);
+      signal.addEventListener("abort", noop);
+      const ref = new WeakRef(signal);
+
+      await waitForDeref(ref);
+
+      signal.removeEventListener("abort", noop);
+      signal = undefined;
+
+      assert.ok(await waitForDeref(ref));
+    });
+
+    test("A dependent signal with listeners and non-empty sources is not dropped until the source is aborted", async () => {
+      const controller = new AbortController();
+
+      let signal: AbortSignal | undefined = AbortSignal.any([controller.signal]);
+      signal.addEventListener("abort", noop);
+      const ref = new WeakRef(signal);
+
+      signal = undefined;
+
+      await waitForDeref(ref);
+      assert.ok(ref.deref());
+
+      controller.abort();
+      assert.ok(await waitForDeref(ref));
+    });
+
+    test("A dependent signal can be dropped after its listener is removed", async () => {
+      const controller = new AbortController();
+
+      let signal: AbortSignal | undefined = AbortSignal.any([controller.signal]);
+      signal.addEventListener("abort", noop);
+      const ref = new WeakRef(signal);
+
+      await waitForDeref(ref);
+
+      signal.removeEventListener("abort", noop);
+      signal = undefined;
+
+      assert.ok(await waitForDeref(ref));
+    });
   });
 });
+
+function noop() {}
 
 function runGarbageCollection() {
   assert.ok(globalThis.gc, "run tests with --expose-gc");
