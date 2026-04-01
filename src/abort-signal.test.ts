@@ -51,4 +51,45 @@ describe("AbortSignal", () => {
       await deferred.promise;
     });
   });
+
+  describe("garbage collection", () => {
+    test("A timeout with no listeners can be dropped", async () => {
+      let signal: AbortSignal | undefined = AbortSignal.timeout(100);
+      const ref = new WeakRef(signal);
+
+      signal = undefined;
+
+      assert.ok(await waitForDeref(ref));
+    });
+
+    test("A dependent signal with no listeners can be dropped", async () => {
+      const controller = new AbortController();
+
+      let signal: AbortSignal | undefined = AbortSignal.any([controller.signal]);
+      const ref = new WeakRef(signal);
+
+      signal = undefined;
+
+      assert.ok(await waitForDeref(ref));
+    });
+
+    test("");
+  });
 });
+
+function runGarbageCollection() {
+  assert.ok(globalThis.gc, "run tests with --expose-gc");
+  globalThis.gc!();
+}
+
+async function waitForDeref<T extends WeakKey>(ref: WeakRef<T>): Promise<boolean> {
+  // limit the number of attemtpts to 50
+  // just in case something goes wrong
+  for (let _ = 0; _ < 50; _++) {
+    await new Promise((resolve) => setImmediate(resolve));
+    runGarbageCollection();
+    if (ref.deref() === undefined) return true;
+  }
+
+  return false;
+}

@@ -20,7 +20,7 @@
     "lint": "oxlint --max-warnings 0",
     "fmt": "oxfmt .",
     "fmt:check": "oxfmt --check .",
-    "test": "node --test --test-timeout 10000 src/**/*.test.ts",
+    "test": "NODE_OPTIONS='--expose-gc' node --test --test-timeout 10000 src/**/*.test.ts",
     "test:wpt": "node --test --test-timeout 10000 test/wpt/wpt.test.ts",
     "ci": "npm run check && npm run lint && npm run fmt:check && npm test && npm run test:wpt",
     "prepare": "npm run build"
