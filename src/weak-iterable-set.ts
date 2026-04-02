@@ -34,6 +34,13 @@ export class IterableWeakSet<T extends WeakKey> {
     return true;
   }
 
+  get empty() {
+    for (const ref of this.#refSet) {
+      if (ref.deref()) return false;
+    }
+    return true;
+  }
+
   *[Symbol.iterator]() {
     for (const ref of this.#refSet) {
       const entry = ref.deref();

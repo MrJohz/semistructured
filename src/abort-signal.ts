@@ -3,6 +3,8 @@ import { IterableWeakSet } from "./weak-iterable-set.ts";
 
 const DEV = globalThis.__DEV__ ?? true;
 
+const GLOBAL_ROOTS = new Set<any>();
+
 /** @internal */
 export const SIGIL = Symbol("AbortSignalConstructorSigil");
 
@@ -10,8 +12,11 @@ export class AbortSignal extends EventTarget {
   #aborted = false;
   #reason: any = undefined;
   #dependent = false;
+  #timingOut = false;
   #sources = new IterableWeakSet<AbortSignal>();
   #targets = new IterableWeakSet<AbortSignal>();
+
+  #abortSteps = new Set<VoidFunction>();
 
   /** @internal */
   constructor(sigil: typeof SIGIL, triggerCb?: (trigger: (reason: any) => void) => void) {
@@ -37,7 +42,10 @@ export class AbortSignal extends EventTarget {
     }
 
     for (const signal of toAbort) {
+      for (const callback of signal.#abortSteps) this.#callCallback(callback);
+      signal.#abortSteps.clear();
       signal.dispatchEvent(new Event("abort"));
+      signal.#updateGarbageCollectability();
     }
   }
 
@@ -80,6 +88,45 @@ export class AbortSignal extends EventTarget {
     if (this.#aborted) throw this.#reason;
   }
 
+  #callCallback(callback: VoidFunction) {
+    try {
+      callback();
+    } catch (err) {
+      queueMicrotask(() => {
+        throw err;
+      });
+    }
+  }
+
+  #collectable = true;
+  #updateGarbageCollectability() {
+    let collectable;
+    if (!this.#aborted && this.#dependent && !this.#sources.empty && this.#abortSteps.size !== 0) {
+      collectable = false;
+    } else if (this.#timingOut && this.#abortSteps.size !== 0) {
+      collectable = false;
+    } else {
+      collectable = true;
+    }
+
+    if (collectable === this.#collectable) return;
+
+    this.#collectable = collectable;
+    if (collectable) GLOBAL_ROOTS.delete(this);
+    else GLOBAL_ROOTS.add(this);
+  }
+
+  addAbortCallback(callback: VoidFunction): Disposable {
+    if (this.#aborted) {
+      this.#callCallback(callback);
+      return { [Symbol.dispose]: () => {} };
+    }
+
+    this.#abortSteps.add(callback);
+    this.#updateGarbageCollectability();
+    return { [Symbol.dispose]: AbortSignal.#makeDisposeCallback(this, callback) };
+  }
+
   // EventTarget type overrides
 
   addEventListener<K extends keyof AbortSignalEventMap>(
@@ -116,6 +163,7 @@ export class AbortSignal extends EventTarget {
 
   static timeout(delay: number): AbortSignal {
     const signal = new AbortSignal(SIGIL);
+    signal.#timingOut = true;
     const ref = new WeakRef(signal);
     setTimeout(AbortSignal.#makeTimeoutCallback(ref), delay);
     return signal;
@@ -136,6 +184,7 @@ export class AbortSignal extends EventTarget {
       if (!signal.#dependent) {
         result.#sources.add(signal);
         signal.#targets.add(result);
+        signal.#updateGarbageCollectability();
       } else {
         for (const source of signal.#sources) {
           if (DEV) {
@@ -144,16 +193,27 @@ export class AbortSignal extends EventTarget {
           }
           result.#sources.add(source);
           source.#targets.add(result);
+          source.#updateGarbageCollectability();
         }
       }
     }
+    result.#updateGarbageCollectability();
     return result;
+  }
+
+  static #makeDisposeCallback(signal: AbortSignal, callback: VoidFunction) {
+    return () => {
+      signal.#abortSteps.delete(callback);
+      signal.#updateGarbageCollectability();
+      signal = undefined as any;
+    };
   }
 
   static #makeTimeoutCallback(ref: WeakRef<AbortSignal>) {
     return () => {
       const signal = ref.deref();
       if (!signal) return;
+      signal.#timingOut = false;
       signal.#trigger(new DOMException("The operation timed out.", "TimeoutError"));
     };
   }

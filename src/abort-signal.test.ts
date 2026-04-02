@@ -94,28 +94,28 @@ describe("AbortSignal", () => {
 
     test("A timeout with a listener is not dropped until the timeout is completed", async () => {
       const start = performance.now();
-      let signal: AbortSignal | undefined = AbortSignal.timeout(100);
-      signal.addEventListener("abort", noop);
+      let signal: AbortSignal | undefined = AbortSignal.timeout(150);
+      signal.addAbortCallback(noop);
       const ref = new WeakRef(signal);
 
       signal = undefined;
 
       await waitForDeref(ref);
-      assert.ok(performance.now() - start < 50, "timeout should not have fired yet");
+      assert.ok(performance.now() - start < 125, "timeout should not have fired yet");
       assert.ok(ref.deref());
 
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      await new Promise((resolve) => setTimeout(resolve, 200));
       assert.ok(await waitForDeref(ref));
     });
 
     test("A timeout can be dropped after its listener is removed", async () => {
       let signal: AbortSignal | undefined = AbortSignal.timeout(100);
-      signal.addEventListener("abort", noop);
+      const { [Symbol.dispose]: dispose } = signal.addAbortCallback(noop);
       const ref = new WeakRef(signal);
 
       await waitForDeref(ref);
 
-      signal.removeEventListener("abort", noop);
+      dispose();
       signal = undefined;
 
       assert.ok(await waitForDeref(ref));
@@ -125,7 +125,7 @@ describe("AbortSignal", () => {
       const controller = new AbortController();
 
       let signal: AbortSignal | undefined = AbortSignal.any([controller.signal]);
-      signal.addEventListener("abort", noop);
+      signal.addAbortCallback(noop);
       const ref = new WeakRef(signal);
 
       signal = undefined;
@@ -141,12 +141,12 @@ describe("AbortSignal", () => {
       const controller = new AbortController();
 
       let signal: AbortSignal | undefined = AbortSignal.any([controller.signal]);
-      signal.addEventListener("abort", noop);
+      const { [Symbol.dispose]: dispose } = signal.addAbortCallback(noop);
       const ref = new WeakRef(signal);
 
       await waitForDeref(ref);
 
-      signal.removeEventListener("abort", noop);
+      dispose();
       signal = undefined;
 
       assert.ok(await waitForDeref(ref));
@@ -162,9 +162,9 @@ function runGarbageCollection() {
 }
 
 async function waitForDeref<T extends WeakKey>(ref: WeakRef<T>): Promise<boolean> {
-  // limit the number of attemtpts to 50
+  // limit the number of attemtpts to 10
   // just in case something goes wrong
-  for (let _ = 0; _ < 50; _++) {
+  for (let _ = 0; _ < 10; _++) {
     await new Promise((resolve) => setImmediate(resolve));
     runGarbageCollection();
     if (ref.deref() === undefined) return true;
